@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -31,63 +30,160 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        final String authHeader = request.getHeader("Authorization");
+        String authorization =
+                request.getHeader("Authorization");
 
-        // No token → continue filter chain
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        /*
+         * ============================================================
+         * NO JWT
+         * ============================================================
+         */
+        if (authorization == null ||
+                !authorization.startsWith("Bearer ")) {
+
             filterChain.doFilter(request, response);
             return;
         }
 
-        final String token = authHeader.substring(7);
-
-        // Invalid token → continue without authentication
-        if (!jwtService.isValid(token)) {
-            filterChain.doFilter(request, response);
-            return;
-        }
+        String token = authorization.substring(7);
 
         try {
-            Claims claims = jwtService.extractClaims(token);
 
-            String username = claims.getSubject();
-            String role = claims.get("role", String.class);
+            /*
+             * ========================================================
+             * VALIDATE JWT
+             * ========================================================
+             */
+            if (!jwtService.isValid(token)) {
 
-            // Build authorities
-            Collection<SimpleGrantedAuthority> authorities = new ArrayList<>();
+                SecurityContextHolder.clearContext();
 
-            if (role != null) {
-                authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
+                filterChain.doFilter(request, response);
+                return;
             }
 
-            // Handle permissions (can be List or single value)
-            Object permissionsClaim = claims.get("permissions");
-            if (permissionsClaim instanceof List<?> permissionsList) {
-                for (Object permission : permissionsList) {
+            Claims claims =
+                    jwtService.extractClaims(token);
+
+
+            /*
+             * ========================================================
+             * EXTRACT USER INFORMATION
+             * ========================================================
+             */
+            String username =
+                    claims.getSubject();
+
+            Integer jwtUserId =
+                    claims.get("userId", Integer.class);
+
+            String role =
+                    claims.get("role", String.class);
+
+
+            if (jwtUserId == null) {
+
+                throw new IllegalStateException(
+                        "User ID not found in JWT"
+                );
+            }
+
+            Long userId =
+                    jwtUserId.longValue();
+
+
+            /*
+             * ========================================================
+             * AUTHORITIES
+             * ========================================================
+             */
+            Collection<SimpleGrantedAuthority> authorities =
+                    new ArrayList<>();
+
+
+            /*
+             * ROLE
+             */
+            if (role != null && !role.isBlank()) {
+
+                authorities.add(
+                        new SimpleGrantedAuthority(
+                                "ROLE_" + role
+                        )
+                );
+            }
+
+
+            /*
+             * PERMISSIONS
+             */
+            Object permissionsObject =
+                    claims.get("permissions");
+
+            if (permissionsObject instanceof List<?> permissions) {
+
+                for (Object permission : permissions) {
+
                     if (permission != null) {
-                        authorities.add(new SimpleGrantedAuthority(permission.toString()));
+
+                        String permissionName =
+                                permission.toString();
+
+                        authorities.add(
+                                new SimpleGrantedAuthority(
+                                        permissionName
+                                )
+                        );
                     }
                 }
             }
 
-            // Set authentication in SecurityContext
+
+            /*
+             * ========================================================
+             * CUSTOM AUTHENTICATED USER
+             * ========================================================
+             */
+            AuthenticatedUser authenticatedUser =
+                    new AuthenticatedUser(
+                            userId,
+                            username,
+                            authorities
+                    );
+
+
+            /*
+             * ========================================================
+             * SPRING SECURITY AUTHENTICATION
+             * ========================================================
+             */
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(
-                            username,
+                            authenticatedUser,
                             null,
                             authorities
                     );
 
-            authentication.setDetails(
-                    new WebAuthenticationDetailsSource().buildDetails(request)
-            );
 
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+            SecurityContextHolder
+                    .getContext()
+                    .setAuthentication(authentication);
+
 
         } catch (Exception e) {
-            // Token parsing failed → clear context
+
+            /*
+             * Invalid JWT must never leave an old authentication
+             * object in the SecurityContext.
+             */
             SecurityContextHolder.clearContext();
+
+            System.out.println(
+                    "JWT authentication failed: "
+                            + e.getMessage()
+            );
         }
+
 
         filterChain.doFilter(request, response);
     }

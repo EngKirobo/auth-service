@@ -9,7 +9,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
-
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +32,14 @@ public class UserController {
         return ResponseEntity.ok(userRepository.findAll());
     }
 
+
+
+    @GetMapping("/roles")
+public ResponseEntity<List<Role>> getAllRoles() {
+    return ResponseEntity.ok(
+            roleRepository.findAllByOrderByNameAsc()
+    );
+}
     // ==========================================
     // GET USER BY ID
     // ==========================================

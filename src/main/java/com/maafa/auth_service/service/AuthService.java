@@ -8,6 +8,7 @@ import com.maafa.auth_service.entity.User;
 import com.maafa.auth_service.repository.UserRepository;
 import com.maafa.auth_service.security.JwtService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +22,10 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final SessionService sessionService;
 
+    @Value("${jwt.expiration}")
+    private long jwtExpirationMs;
 
     // ==========================================
     // REGISTER
@@ -34,78 +38,60 @@ public class AuthService {
 
         if (request.getEmail() != null &&
                 userRepository.existsByEmail(request.getEmail())) {
-
             throw new RuntimeException("Email already exists");
         }
 
         User user = new User();
-
         user.setUsername(request.getUsername());
         user.setEmail(request.getEmail());
-
-        // NEVER save plain-text password
-        user.setPassword(
-                passwordEncoder.encode(request.getPassword())
-        );
-
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEnabled(true);
 
         return userRepository.save(user);
     }
-
 
     // ==========================================
     // LOGIN
     // ==========================================
     public LoginResponse login(LoginRequest request) {
 
-        // 1. Find user
         User user = userRepository
                 .findByUsername(request.getUsername())
                 .orElseThrow(() ->
-                        new RuntimeException(
-                                "Invalid username or password"
-                        )
+                        new RuntimeException("Invalid username or password")
                 );
 
+        if (!Boolean.TRUE.equals(user.getEnabled())) {
+            throw new RuntimeException("User account is disabled");
+        }
 
-        // 2. Check whether account is enabled
-        // if (!user.isEnabled()) {
-        //     throw new RuntimeException(
-        //             "User account is disabled"
-        //     );
-        // }
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            throw new RuntimeException("Invalid username or password");
+        }
 
+        return createAuthenticationResponse(user);
+    }
+
+    // ==========================================
+    // CREATE AUTHENTICATION RESPONSE
+    // (shared by login + handoff)
+    // ==========================================
+    public LoginResponse createAuthenticationResponse(User user) {
+
+        if (user == null) {
+            throw new RuntimeException("User not found");
+        }
 
         if (!Boolean.TRUE.equals(user.getEnabled())) {
-            throw new RuntimeException(
-                    "User account is disabled"
-            );
+            throw new RuntimeException("User account is disabled");
         }
 
-
-        // 3. Verify password
-        if (!passwordEncoder.matches(
-                request.getPassword(),
-                user.getPassword())) {
-
-            throw new RuntimeException(
-                    "Invalid username or password"
-            );
-        }
-
-
-        // 4. Get role
         String role = null;
-
         if (user.getRole() != null) {
             role = user.getRole().getName();
         }
 
-
-        // 5. Get permissions
         Set<String> permissions = Set.of();
-
         if (user.getRole() != null &&
                 user.getRole().getPermissions() != null) {
 
@@ -116,8 +102,7 @@ public class AuthService {
                     .collect(Collectors.toSet());
         }
 
-
-        // 6. Generate JWT
+        // Generate JWT
         String token = jwtService.generateToken(
                 user.getId(),
                 user.getUsername(),
@@ -125,8 +110,13 @@ public class AuthService {
                 permissions
         );
 
+        // Save session in atcmaafa.user_sessions
+        sessionService.createSession(
+                user.getId(),
+                token,
+                jwtExpirationMs
+        );
 
-        // 7. Return login response
         return LoginResponse.builder()
                 .token(token)
                 .userId(user.getId())
@@ -134,5 +124,25 @@ public class AuthService {
                 .role(role)
                 .permissions(permissions)
                 .build();
+    }
+
+    // ==========================================
+    // AUTHENTICATION HANDOFF
+    // ==========================================
+    public LoginResponse authenticateByHandoff(Integer userId) {
+
+        if (userId == null) {
+            throw new RuntimeException("User ID is required");
+        }
+
+        User user = userRepository
+                .findById(userId)
+                .orElseThrow(() ->
+                        new RuntimeException(
+                                "User associated with handoff was not found"
+                        )
+                );
+
+        return createAuthenticationResponse(user);
     }
 }

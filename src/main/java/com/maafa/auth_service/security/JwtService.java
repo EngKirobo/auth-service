@@ -17,63 +17,92 @@ public class JwtService {
     private final SecretKey key;
     private final long expiration;
 
+
     public JwtService(
             @Value("${jwt.secret}") String secret,
-            @Value("${jwt.expiration}") long expiration) {
+            @Value("${jwt.expiration}") long expiration
+    ) {
 
-        this.key = Keys.hmacShaKeyFor(
-                secret.getBytes(StandardCharsets.UTF_8)
-        );
+        if (secret == null || secret.length() < 32) {
+
+            throw new IllegalArgumentException(
+                    "jwt.secret must contain at least 32 characters"
+            );
+        }
+
+        this.key =
+                Keys.hmacShaKeyFor(
+                        secret.getBytes(StandardCharsets.UTF_8)
+                );
 
         this.expiration = expiration;
     }
 
 
-    // ==========================================
-    // GENERATE JWT TOKEN
-    // ==========================================
+    /*
+     * ============================================================
+     * GENERATE JWT TOKEN
+     * ============================================================
+     */
     public String generateToken(
-            Integer  userId,
+            Integer userId,
             String username,
             String role,
-            Object permissions) {
+            Object permissions
+    ) {
 
         Date now = new Date();
 
-        Date expiry = new Date(
-                now.getTime() + expiration
-        );
+        Date expiry =
+                new Date(
+                        now.getTime() + expiration
+                );
 
         return Jwts.builder()
+
                 .subject(username)
-                .claims(Map.of(
-                        "userId", userId,
-                        "role", role,
-                        "permissions", permissions
-                ))
+
+                .claims(
+                        Map.of(
+                                "userId", userId,
+                                "role", role,
+                                "permissions", permissions
+                        )
+                )
+
                 .issuedAt(now)
                 .expiration(expiry)
+
                 .signWith(key)
+
                 .compact();
     }
 
 
-    // ==========================================
-    // EXTRACT JWT CLAIMS
-    // ==========================================
+    /*
+     * ============================================================
+     * EXTRACT JWT CLAIMS
+     * ============================================================
+     */
     public Claims extractClaims(String token) {
 
         return Jwts.parser()
+
                 .verifyWith(key)
+
                 .build()
+
                 .parseSignedClaims(token)
+
                 .getPayload();
     }
 
 
-    // ==========================================
-    // VALIDATE TOKEN
-    // ==========================================
+    /*
+     * ============================================================
+     * VALIDATE JWT
+     * ============================================================
+     */
     public boolean isValid(String token) {
 
         try {
@@ -86,5 +115,42 @@ public class JwtService {
 
             return false;
         }
+    }
+
+
+    /*
+     * ============================================================
+     * GENERATE NEW TOKEN FROM EXISTING CLAIMS
+     * ============================================================
+     */
+    public String generateTokenFromClaims(
+            Claims claims
+    ) {
+
+        Integer userId =
+                claims.get(
+                        "userId",
+                        Integer.class
+                );
+
+        String username =
+                claims.getSubject();
+
+        String role =
+                claims.get(
+                        "role",
+                        String.class
+                );
+
+        Object permissions =
+                claims.get("permissions");
+
+
+        return generateToken(
+                userId,
+                username,
+                role,
+                permissions
+        );
     }
 }
