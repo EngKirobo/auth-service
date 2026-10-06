@@ -1,0 +1,1 @@
+powershell -ExecutionPolicy Bypass -File "C:\angula17\auth-service\auth-service\db\runmonthly.ps1"
